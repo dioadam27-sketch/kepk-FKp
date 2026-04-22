@@ -1,0 +1,20 @@
+@import "tailwindcss";
+
+@theme {
+  --color-unair-blue: #00467F;
+  --color-unair-gold: #FFC72C;
+  --color-bg-light: #F4F7FA;
+  --color-text-main: #1A202C;
+  --color-text-muted: #718096;
+  --color-border-color: #E2E8F0;
+  --color-accent-green: #48BB78;
+  --color-accent-orange: #ED8936;
+  
+  --font-sans: "Helvetica Neue", Arial, sans-serif;
+}
+
+@layer base {
+  body {
+    @apply bg-bg-light text-text-main font-sans;
+  }
+}
