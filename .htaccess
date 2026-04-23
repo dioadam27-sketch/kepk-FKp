@@ -1,0 +1,38 @@
+# 1. Disable Directory Listing
+Options -Indexes
+
+# 2. Redirect to HTTPS
+RewriteEngine On
+RewriteCond %{HTTPS} off
+RewriteRule ^(.*)$ https://%{HTTP_HOST}%{REQUEST_URI} [L,R=301]
+
+# 3. Protect sensitive files (.env, .htaccess, strict file extensions)
+<FilesMatch "^\.">
+    Require all denied
+</FilesMatch>
+
+<FilesMatch "\.(env|sql|log|ini|json|lock)$">
+    Require all denied
+</FilesMatch>
+
+# 4. Routing all frontend requests to React's index.html
+# (only if the request is not an actual file, folder, or api request)
+RewriteCond %{REQUEST_FILENAME} !-f
+RewriteCond %{REQUEST_FILENAME} !-d
+RewriteCond %{REQUEST_URI} !^/api/
+RewriteRule ^.*$ index.html [L]
+
+# 5. Prevent Clickjacking and XSS
+<IfModule mod_headers.c>
+    Header set X-XSS-Protection "1; mode=block"
+    Header set X-Frame-Options "SAMEORIGIN"
+    Header set X-Content-Type-Options "nosniff"
+    Header set Referrer-Policy "strict-origin-when-cross-origin"
+    # Header set Content-Security-Policy "default-src 'self' https:; script-src 'self' 'unsafe-inline' 'unsafe-eval' https:; style-src 'self' 'unsafe-inline' https:; img-src 'self' data: https:;"
+</IfModule>
+
+# 6. Block malicious User Agents & SQL Injection attempts (Basic)
+RewriteCond %{QUERY_STRING} (?:%25|%27|%22|%3C|%3E) [NC,OR]
+RewriteCond %{QUERY_STRING} (?:union(?:.+)?select) [NC,OR]
+RewriteCond %{QUERY_STRING} (?:concat|eval|base64_decode) [NC]
+RewriteRule ^(.*)$ - [F,L]

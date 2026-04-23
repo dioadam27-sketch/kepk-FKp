@@ -4,6 +4,8 @@
  */
 
 import React, { useState, useEffect } from 'react';
+import { useNavigate } from 'react-router-dom';
+import { motion, AnimatePresence } from 'motion/react';
 import { dbService } from '../dbService';
 import { Protocol, User } from '../types';
 import { 
@@ -24,28 +26,74 @@ import {
 
 interface ResearcherDashboardProps {
   user: User;
-  onNewProtocol: () => void;
-  onEditProtocol: (id: string) => void;
   onUpdateUser?: (user: User) => void;
 }
 
-export default function ResearcherDashboard({ user, onNewProtocol, onEditProtocol, onUpdateUser }: ResearcherDashboardProps) {
+export default function ResearcherDashboard({ user, onUpdateUser }: ResearcherDashboardProps) {
   const [protocols, setProtocols] = useState<Protocol[]>([]);
   const [isLoading, setIsLoading] = useState(true);
+  const navigate = useNavigate();
   const [isEditProfileOpen, setIsEditProfileOpen] = useState(false);
   const [isConfirmSaveOpen, setIsConfirmSaveOpen] = useState(false);
   const [isSavingProfile, setIsSavingProfile] = useState(false);
   const [editFormData, setEditFormData] = useState<Partial<User>>({});
+  const [showSuccessToast, setShowSuccessToast] = useState(false);
+
+  const handleEditProfileClick = React.useCallback(() => {
+    if (!user) return;
+    setEditFormData({
+      id: user.id,
+      name: user.name,
+      profile: {
+        placeOfBirth: user.profile?.placeOfBirth || '',
+        dateOfBirth: user.profile?.dateOfBirth || '',
+        gender: user.profile?.gender || '',
+        lastEducation: user.profile?.lastEducation || '',
+        status: user.profile?.status || '',
+        institution: user.profile?.institution || '',
+        phone: user.profile?.phone || ''
+      }
+    });
+    setIsEditProfileOpen(true);
+  }, [user.id, user.name, user.profile?.placeOfBirth, user.profile?.dateOfBirth, user.profile?.gender, user.profile?.lastEducation, user.profile?.status, user.profile?.institution, user.profile?.phone]);
 
   useEffect(() => {
+    let active = true;
     const fetchProtocols = async () => {
+      if (!user.id) return;
       setIsLoading(true);
-      const allProtocols = await dbService.getProtocols(user.id);
-      setProtocols(allProtocols);
-      setIsLoading(false);
+      try {
+        const allProtocols = await dbService.getProtocols(user.id);
+        if (active) {
+          setProtocols(allProtocols);
+        }
+      } catch (err) {
+        console.error("Failed to fetch protocols:", err);
+      } finally {
+        if (active) setIsLoading(false);
+      }
     };
     fetchProtocols();
+    return () => { active = false; };
   }, [user.id]);
+
+  const isProfileComplete = !!user.profile?.isProfileComplete;
+  const userRole = user.role;
+
+  useEffect(() => {
+    // Auto-open edit profile if incomplete - only trigger once when conditions meet
+    if (userRole === 'RESEARCHER' && !isProfileComplete && !isEditProfileOpen) {
+      handleEditProfileClick();
+    }
+  }, [userRole, isProfileComplete, isEditProfileOpen, handleEditProfileClick]);
+
+  const handleEditProtocol = (id: string) => {
+    navigate(`/protocol/edit/${id}`);
+  };
+
+  const handleNewProtocol = () => {
+    navigate('/protocol/new');
+  };
 
   const getStatusColor = (status: Protocol['status']) => {
     switch (status) {
@@ -66,34 +114,38 @@ export default function ResearcherDashboard({ user, onNewProtocol, onEditProtoco
     }
   };
 
-  const handleEditProfileClick = () => {
-    setEditFormData({
-      id: user.id,
-      name: user.name,
-      profile: {
-        placeOfBirth: user.profile?.placeOfBirth || '',
-        dateOfBirth: user.profile?.dateOfBirth || '',
-        gender: user.profile?.gender || '',
-        lastEducation: user.profile?.lastEducation || '',
-        status: user.profile?.status || '',
-        institution: user.profile?.institution || '',
-        phone: user.profile?.phone || ''
-      }
-    });
-    setIsEditProfileOpen(true);
+  const placeholder_handleEditProfileClick_moved = () => {
+    // This function was moved above useEffect
   };
 
   const handleSaveProfileClick = () => {
+    // Basic validation
+    if (!editFormData.name || !editFormData.profile?.phone || !editFormData.profile?.institution) {
+      alert('Mohon isi Nama, Nomor Kontak, dan Institusi.');
+      return;
+    }
     setIsConfirmSaveOpen(true);
   };
 
   const handleConfirmSaveProfile = async () => {
     if (editFormData && editFormData.id) {
       setIsSavingProfile(true);
-      const updatedUser = await dbService.updateProfile(editFormData as User);
+      
+      // Ensure profile is marked as complete
+      const dataToSave = {
+        ...editFormData,
+        profile: {
+          ...editFormData.profile,
+          isProfileComplete: true
+        }
+      };
+
+      const updatedUser = await dbService.updateProfile(dataToSave as User);
       setIsSavingProfile(false);
       if (updatedUser && onUpdateUser) {
         onUpdateUser(updatedUser);
+        setShowSuccessToast(true);
+        setTimeout(() => setShowSuccessToast(false), 3000);
       }
     }
     setIsConfirmSaveOpen(false);
@@ -102,6 +154,21 @@ export default function ResearcherDashboard({ user, onNewProtocol, onEditProtoco
 
   return (
     <div className="grid grid-cols-1 lg:grid-cols-4 gap-4 auto-rows-auto lg:grid-rows-[auto_auto]">
+      {/* Toast Notification */}
+      <AnimatePresence>
+        {showSuccessToast && (
+          <motion.div 
+            initial={{ opacity: 0, y: 50 }}
+            animate={{ opacity: 1, y: 0 }}
+            exit={{ opacity: 0, scale: 0.95 }}
+            className="fixed bottom-8 left-1/2 -translate-x-1/2 bg-accent-green text-white px-6 py-3 rounded-2xl shadow-2xl z-[100] flex items-center gap-3 border border-white/20"
+          >
+            <CheckCircle2 className="w-5 h-5 text-white" />
+            <span className="text-xs font-bold uppercase tracking-widest">Data diri berhasil diperbarui</span>
+          </motion.div>
+        )}
+      </AnimatePresence>
+
       {/* Card 1: Informasi Pengusul */}
       <div className="lg:col-span-2 bg-white rounded-2xl border border-border-color p-5 shadow-sm flex flex-col">
         <h2 className="text-unair-blue font-bold text-sm uppercase tracking-wider mb-4 flex items-center gap-2 border-b border-border-color pb-2">
@@ -207,7 +274,7 @@ export default function ResearcherDashboard({ user, onNewProtocol, onEditProtoco
                     <td className="px-5 py-4 text-right">
                       <div className="flex justify-end gap-1">
                         <button 
-                          onClick={() => onEditProtocol(p.id)}
+                          onClick={() => handleEditProtocol(p.id)}
                           className="p-1.5 hover:bg-unair-blue hover:text-white rounded-lg transition-all text-unair-blue border border-unair-blue/20 hover:border-unair-blue"
                           title={p.status === 'DRAFT' || p.status === 'REVISION_REQUIRED' ? 'Edit / Revisi' : 'Lihat Detail'}
                         >
@@ -243,7 +310,7 @@ export default function ResearcherDashboard({ user, onNewProtocol, onEditProtoco
 
         <div className="flex flex-col gap-3 mt-auto">
           <button 
-            onClick={onNewProtocol}
+            onClick={handleNewProtocol}
             className="w-full bg-unair-blue text-white py-3 rounded-xl font-bold uppercase tracking-widest text-[11px] hover:bg-unair-blue/90 transition-all shadow-sm flex items-center justify-center gap-2"
           >
             <Plus className="w-4 h-4" />
@@ -267,11 +334,18 @@ export default function ResearcherDashboard({ user, onNewProtocol, onEditProtoco
         <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4">
           <div className="bg-white rounded-2xl shadow-xl w-full max-w-2xl max-h-[90vh] overflow-y-auto">
             <div className="p-6 border-b border-border-color flex justify-between items-center sticky top-0 bg-white z-10">
-              <h3 className="text-lg font-bold text-unair-blue flex items-center gap-2">
-                <UserIcon className="w-5 h-5" />
-                Edit Data Diri
-              </h3>
-              <button onClick={() => setIsEditProfileOpen(false)} className="text-text-muted hover:text-red-500 font-bold">✕</button>
+              <div>
+                <h3 className="text-lg font-bold text-unair-blue flex items-center gap-2">
+                  <UserIcon className="w-5 h-5" />
+                  Edit Data Diri
+                </h3>
+                {!user.profile?.isProfileComplete && (
+                  <p className="text-[10px] text-orange-600 font-bold uppercase tracking-wider mt-1">Silakan lengkapi profil Anda untuk melanjutkan</p>
+                )}
+              </div>
+              {user.profile?.isProfileComplete && (
+                <button onClick={() => setIsEditProfileOpen(false)} className="text-text-muted hover:text-red-500 font-bold">✕</button>
+              )}
             </div>
             
             <div className="p-6 space-y-4">
@@ -365,12 +439,14 @@ export default function ResearcherDashboard({ user, onNewProtocol, onEditProtoco
             </div>
 
             <div className="p-6 border-t border-border-color flex justify-end gap-3 sticky bottom-0 bg-white">
-              <button 
-                onClick={() => setIsEditProfileOpen(false)}
-                className="px-6 py-2 rounded-xl text-xs font-bold uppercase tracking-widest text-text-muted hover:bg-bg-light transition-all"
-              >
-                Batal
-              </button>
+              {user.profile?.isProfileComplete && (
+                <button 
+                  onClick={() => setIsEditProfileOpen(false)}
+                  className="px-6 py-2 rounded-xl text-xs font-bold uppercase tracking-widest text-text-muted hover:bg-bg-light transition-all"
+                >
+                  Batal
+                </button>
+              )}
               <button 
                 onClick={handleSaveProfileClick}
                 className="px-6 py-2 rounded-xl text-xs font-bold uppercase tracking-widest bg-unair-blue text-white hover:bg-unair-blue/90 transition-all shadow-md"

@@ -6,6 +6,9 @@
 import React, { useState } from 'react';
 import { dbService } from '../dbService';
 import { ArrowLeft, UserPlus } from 'lucide-react';
+import { signInWithGoogle } from '../lib/firebase';
+import LoadingOverlay from './LoadingOverlay';
+import { AnimatePresence } from 'motion/react';
 
 interface RegisterProps {
   onBack: () => void;
@@ -27,6 +30,7 @@ export default function Register({ onBack, onRegister }: RegisterProps) {
     confirmPassword: '',
   });
   const [error, setError] = useState('');
+  const [isLoading, setIsLoading] = useState(false);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -34,6 +38,7 @@ export default function Register({ onBack, onRegister }: RegisterProps) {
       setError('Password tidak cocok.');
       return;
     }
+    setIsLoading(true);
     const user = await dbService.register({
       name: formData.name,
       email: formData.email,
@@ -49,6 +54,7 @@ export default function Register({ onBack, onRegister }: RegisterProps) {
         phone: formData.phone,
       }
     });
+    setIsLoading(false);
     
     if (user) {
       onRegister(user);
@@ -57,8 +63,38 @@ export default function Register({ onBack, onRegister }: RegisterProps) {
     }
   };
 
+  const handleGoogleRegister = async () => {
+    setIsLoading(true);
+    setError('');
+    try {
+      const googleUser = await signInWithGoogle();
+      if (googleUser && googleUser.email) {
+        const user = await dbService.loginWithGoogle(
+          googleUser.email, 
+          googleUser.displayName || 'Google User', 
+          'RESEARCHER'
+        );
+        
+        if (user) {
+          onRegister(user);
+        } else {
+          setError('Gagal pendaftaran via Google.');
+        }
+      }
+    } catch (err: any) {
+      if (err.code !== 'auth/cancelled-popup-request' && err.code !== 'auth/popup-closed-by-user') {
+        setError('Gagal pendaftaran Google. Silakan coba lagi.');
+      }
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
   return (
     <div className="max-w-2xl mx-auto mt-10">
+      <AnimatePresence>
+        {isLoading && <LoadingOverlay message="Memproses Database..." />}
+      </AnimatePresence>
       <button 
         onClick={onBack}
         className="flex items-center gap-2 text-sm text-text-muted hover:text-unair-blue mb-6 transition-all font-bold uppercase tracking-widest"
@@ -68,9 +104,33 @@ export default function Register({ onBack, onRegister }: RegisterProps) {
       </button>
 
       <div className="bg-white p-8 rounded-2xl shadow-sm border border-border-color">
+        <div className="mb-8 flex items-center gap-4">
+          <img 
+            src="https://i.imgur.com/sbVYY1A.png" 
+            alt="Logo UNAIR" 
+            className="h-12 w-auto object-contain"
+            referrerPolicy="no-referrer"
+          />
+          <div>
+            <h2 className="text-2xl font-bold tracking-tight text-unair-blue">Registrasi Peneliti</h2>
+            <p className="text-sm text-text-muted">Lengkapi data diri untuk membuat akun pengusul</p>
+          </div>
+        </div>
+
         <div className="mb-8">
-          <h2 className="text-2xl font-bold tracking-tight text-unair-blue">Registrasi Peneliti</h2>
-          <p className="text-sm text-text-muted">Lengkapi data diri untuk membuat akun pengusul</p>
+          <button 
+            type="button"
+            onClick={handleGoogleRegister}
+            className="w-full bg-white text-text-main py-4 rounded-xl font-bold uppercase tracking-widest text-xs transition-all flex items-center justify-center gap-3 border border-border-color shadow-sm hover:bg-bg-light"
+          >
+            <img src="https://www.gstatic.com/firebasejs/ui/2.0.0/images/auth/google.svg" alt="Google" className="w-5 h-5" />
+            Daftar Cepat dengan Google
+          </button>
+
+          <div className="relative flex items-center justify-center py-6">
+            <div className="border-t border-border-color w-full"></div>
+            <span className="bg-white px-4 text-[10px] uppercase tracking-widest font-bold text-text-muted absolute">Atau isi Manual</span>
+          </div>
         </div>
 
         <form onSubmit={handleSubmit} className="space-y-6">

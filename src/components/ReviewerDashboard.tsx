@@ -7,6 +7,8 @@ import React, { useState, useEffect } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
 import { dbService } from '../dbService';
 import { Protocol, User, Review } from '../types';
+import ReviewerProfileForm from './ReviewerProfileForm';
+import { security } from '../utils/security';
 import { 
   FileText, 
   Download, 
@@ -23,6 +25,7 @@ interface ReviewerDashboardProps {
 }
 
 export default function ReviewerDashboard({ user }: ReviewerDashboardProps) {
+  const [currentUser, setCurrentUser] = useState<User>(user);
   const [protocols, setProtocols] = useState<Protocol[]>([]);
   const [selectedProtocol, setSelectedProtocol] = useState<Protocol | null>(null);
   const [confirmDownload, setConfirmDownload] = useState<{protocol: Protocol, fileUrl: string, title: string} | null>(null);
@@ -31,30 +34,34 @@ export default function ReviewerDashboard({ user }: ReviewerDashboardProps) {
 
   const handleDownload = () => {
     if (confirmDownload && confirmDownload.fileUrl) {
-       // Direct browser to download the file directly instead of just viewing it. 
-       // Note: Since files are on Google Drive, opening it in a new window is the standard download/view flow 
-       // unless using specific drive API exportLinks. For now, we open the drive link.
        window.open(confirmDownload.fileUrl, '_blank');
     }
     setConfirmDownload(null);
   };
 
+  const userId = currentUser.id;
+  const isProfileComplete = !!currentUser.profile?.isProfileComplete;
+
   useEffect(() => {
-    const fetchProtocols = async () => {
-      const allProtocols = await dbService.getProtocols();
-      // In a real app, we filter by assignedReviewers. 
-      // For this demo, we'll show protocols with status 'ASSIGNED' or 'REVIEWING'
-      setProtocols(allProtocols.filter(p => p.status === 'ASSIGNED' || p.status === 'REVIEWING' || p.status === 'APPROVED'));
-    };
-    fetchProtocols();
-  }, []);
+    if (isProfileComplete) {
+      const fetchProtocols = async () => {
+        try {
+          const allProtocols = await dbService.getProtocols();
+          setProtocols(allProtocols.filter(p => p.status === 'ASSIGNED' || p.status === 'REVIEWING' || p.status === 'APPROVED'));
+        } catch (err) {
+          console.error("Failed to fetch protocols:", err);
+        }
+      };
+      fetchProtocols();
+    }
+  }, [userId, isProfileComplete]);
 
   const handleReviewSubmit = async () => {
     if (!selectedProtocol) return;
 
     const review: Review = {
-      reviewerId: user.id,
-      reviewerName: user.name,
+      reviewerId: currentUser.id,
+      reviewerName: currentUser.name,
       assignedAt: new Date().toLocaleDateString('id-ID'),
       submittedAt: new Date().toLocaleDateString('id-ID'),
       reviewFile: 'review_result.pdf',
@@ -75,6 +82,20 @@ export default function ReviewerDashboard({ user }: ReviewerDashboardProps) {
       setProtocols(allProtocols.filter(p => p.status === 'ASSIGNED' || p.status === 'REVIEWING' || p.status === 'APPROVED'));
     }
   };
+
+  // If profile is not complete, show the registration form
+  if (!currentUser.profile?.isProfileComplete) {
+    return (
+      <ReviewerProfileForm 
+        user={currentUser} 
+        onComplete={(updatedUser) => {
+          setCurrentUser(updatedUser);
+          // Also update local storage so App keeps the state
+          localStorage.setItem('sim_kepk_user', security.encrypt(updatedUser));
+        }} 
+      />
+    );
+  }
 
   return (
     <div className="grid grid-cols-1 lg:grid-cols-4 gap-4 auto-rows-auto">

@@ -1,0 +1,12 @@
+# Matikan eksekusi script di folder upload
+php_flag engine off
+Options -ExecCGI
+AddHandler cgi-script .php .php3 .php4 .php5 .phtml .pl .py .jsp .asp .htm .html .sh .cgi
+<FilesMatch "\.(php|php\.?.*|phtml|pl|py|jsp|asp|sh|cgi)$">
+    Require all denied
+</FilesMatch>
+
+# Hanya izinkan gambar dan dokumen
+<FilesMatch "\.(?i:pdf|doc|docx|jpg|jpeg|png)$">
+    Require all granted
+</FilesMatch>

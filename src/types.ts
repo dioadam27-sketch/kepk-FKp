@@ -19,6 +19,10 @@ export interface User {
     status: string; // D3, D4, S1, S2, S3, Dosen/Umum
     institution: string;
     phone: string;
+    ethicsTraining?: string;
+    ethicsTrainingFile?: string;
+    confidentialityAgreementFile?: string;
+    isProfileComplete?: boolean;
   };
 }
 
@@ -73,6 +77,7 @@ export interface Protocol {
     psp: string;
     ic: string;
     instruments: string;
+    screeningForm: string;
     supportingDocs: string[];
     paymentProof: string;
   };

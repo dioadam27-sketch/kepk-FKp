@@ -3,24 +3,15 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, ReactNode, useCallback } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
 import { 
-  ClipboardCheck, 
-  FileText, 
-  Users, 
   LogOut, 
-  Bell, 
-  User as UserIcon,
-  LayoutDashboard,
-  FilePlus,
-  History,
-  Award,
-  Settings,
-  ShieldCheck
+  User as UserIcon
 } from 'lucide-react';
+import { BrowserRouter as Router, Routes, Route, Navigate, useNavigate, useLocation, useParams } from 'react-router-dom';
 import { dbService } from './dbService';
-import { User, UserRole, Protocol } from './types';
+import { User } from './types';
 
 // Components
 import Login from './components/Login';
@@ -29,87 +20,121 @@ import ResearcherDashboard from './components/ResearcherDashboard';
 import ReviewerDashboard from './components/ReviewerDashboard';
 import AdminDashboard from './components/AdminDashboard';
 import ProtocolForm from './components/ProtocolForm';
+import LoadingOverlay from './components/LoadingOverlay';
 
-export default function App() {
+// Seeding function
+const seedDummyAccounts = async () => {
+  const seededFlag = localStorage.getItem('sim_kepk_seeded_v1');
+  if (seededFlag) return;
+
+  const dummyUsers = [
+    { id: 'adm_unair_01', email: 'admin@kepk.unair.ac.id', password: 'Admin123!', role: 'ADMIN', name: 'Administrator KEPK' },
+    { id: 'res_unair_01', email: 'peneliti@kepk.unair.ac.id', password: 'Peneliti123!', role: 'RESEARCHER', name: 'Dr. Peneliti Utama, M.Kep' },
+    { id: 'rev_unair_01', email: 'reviewer@kepk.unair.ac.id', password: 'Reviewer123!', role: 'REVIEWER', name: 'Prof. Dr. Reviewer Etik' }
+  ];
+
+  for (const u of dummyUsers) {
+    try {
+      await dbService.register(u as any);
+    } catch (e) {
+      console.warn('Seeding user already exists or failed:', u.email);
+    }
+  }
+  localStorage.setItem('sim_kepk_seeded_v1', 'true');
+};
+
+// Protected Route Component
+function ProtectedRoute({ user, children, allowedRoles }: { user: User | null, children: ReactNode, allowedRoles?: string[] }) {
+  const location = useLocation();
+  
+  if (!user) {
+    return <Navigate to="/login" state={{ from: location }} replace />;
+  }
+
+  if (allowedRoles && !allowedRoles.includes(user.role)) {
+    return <Navigate to="/" replace />;
+  }
+
+  return <>{children}</>;
+}
+
+function ProtocolFormWrapper({ user }: { user: User }) {
+  const { id } = useParams<{ id: string }>();
+  const navigate = useNavigate();
+  return <ProtocolForm user={user} protocolId={id || null} onBack={() => navigate('/')} onSave={() => navigate('/')} />;
+}
+
+function NavigationWrapper() {
   const [user, setUser] = useState<User | null>(null);
-  const [view, setView] = useState<'LOGIN' | 'REGISTER' | 'DASHBOARD' | 'PROTOCOL_FORM'>('LOGIN');
-  const [selectedProtocolId, setSelectedProtocolId] = useState<string | null>(null);
+  const [isInitialLoading, setIsInitialLoading] = useState(true);
+  const navigate = useNavigate();
+  const location = useLocation();
 
   useEffect(() => {
     const checkUser = async () => {
-      const currentUser = await dbService.getCurrentUser();
-      if (currentUser) {
-        setUser(currentUser);
-        setView('DASHBOARD');
+      try {
+        // Auto-seed dummy accounts on first run
+        await seedDummyAccounts();
+        
+        const currentUser = await dbService.getCurrentUser();
+        if (currentUser) {
+          setUser(currentUser);
+        }
+      } catch (error) {
+        console.error("Auth check failed", error);
+      } finally {
+        setIsInitialLoading(false);
       }
     };
     checkUser();
   }, []);
 
-  const handleLogin = (u: User) => {
+  const handleLogin = useCallback((u: User) => {
     setUser(u);
-    setView('DASHBOARD');
-  };
+    const origin = (location.state as any)?.from?.pathname || "/";
+    navigate(origin, { replace: true });
+  }, [navigate, location.state]);
 
-  const handleLogout = () => {
+  const handleLogout = useCallback(() => {
     dbService.logout();
     setUser(null);
-    setView('LOGIN');
-  };
+    navigate('/login', { replace: true });
+  }, [navigate]);
 
-  const renderView = () => {
-    if (!user) {
-      if (view === 'REGISTER') return <Register onBack={() => setView('LOGIN')} onRegister={handleLogin} />;
-      return <Login onLogin={handleLogin} onRegister={() => setView('REGISTER')} />;
-    }
+  const goToRegister = useCallback(() => navigate('/register'), [navigate]);
+  const goToLogin = useCallback(() => navigate('/login'), [navigate]);
+  const goHome = useCallback(() => navigate('/'), [navigate]);
 
-    if (view === 'PROTOCOL_FORM') {
-      return (
-        <ProtocolForm 
-          user={user}
-          protocolId={selectedProtocolId} 
-          onBack={() => setView('DASHBOARD')} 
-          onSave={() => setView('DASHBOARD')}
-        />
-      );
-    }
-
-    switch (user.role) {
-      case 'RESEARCHER':
-        return (
-          <ResearcherDashboard 
-            user={user} 
-            onNewProtocol={() => {
-              setSelectedProtocolId(null);
-              setView('PROTOCOL_FORM');
-            }}
-            onEditProtocol={(id) => {
-              setSelectedProtocolId(id);
-              setView('PROTOCOL_FORM');
-            }}
-            onUpdateUser={setUser}
-          />
-        );
-      case 'REVIEWER':
-        return <ReviewerDashboard user={user} />;
-      case 'ADMIN':
-        return <AdminDashboard user={user} />;
-      default:
-        return <div>Invalid Role</div>;
-    }
-  };
+  if (isInitialLoading) {
+    return <LoadingOverlay message="Menyinkronkan Sesi..." />;
+  }
 
   return (
-    <div className="min-h-screen bg-bg-light text-text-main font-sans">
+    <div className="min-h-screen bg-bg-light text-text-main font-sans relative overflow-x-hidden">
+      {/* Background Accent Logo for Login/Register */}
+      {!user && (
+        <div className="fixed inset-0 flex items-center justify-center pointer-events-none z-0 overflow-hidden opacity-[0.04]">
+          <img 
+            src="https://i.imgur.com/sbVYY1A.png" 
+            alt="" 
+            className="w-[600px] h-auto object-contain"
+            referrerPolicy="no-referrer"
+          />
+        </div>
+      )}
+
       {/* Header */}
       <header className="bg-unair-blue border-b-4 border-unair-gold px-6 py-4 flex items-center justify-between sticky top-0 z-50 text-white shadow-md">
         <div className="flex items-center gap-3">
-          <div className="bg-white/10 p-2 rounded-lg">
-            <ShieldCheck className="text-white w-6 h-6" />
-          </div>
+          <img 
+            src="https://i.imgur.com/sbVYY1A.png" 
+            alt="Logo UNAIR" 
+            className="h-10 w-auto object-contain"
+            referrerPolicy="no-referrer"
+          />
           <div>
-            <h1 className="font-bold text-lg tracking-tight">SIM-KEPK <span className="font-light">FKp UNAIR</span></h1>
-            <p className="text-[10px] uppercase tracking-widest opacity-70 font-medium">Ethical Clearance Management</p>
+            <h1 className="font-bold text-lg tracking-tight text-white">SIM-KEPK <span className="font-light">FKp UNAIR</span></h1>
+            <p className="text-[10px] uppercase tracking-widest opacity-70 font-medium text-white">Ethical Clearance Management</p>
           </div>
         </div>
 
@@ -139,16 +164,41 @@ export default function App() {
         )}
       </header>
 
-      <main className="max-w-7xl mx-auto p-6">
+      <main className="max-w-7xl mx-auto p-6 relative z-10">
         <AnimatePresence mode="wait">
           <motion.div
-            key={view + (user?.role || '')}
+            key={location.pathname}
             initial={{ opacity: 0, y: 10 }}
             animate={{ opacity: 1, y: 0 }}
             exit={{ opacity: 0, y: -10 }}
             transition={{ duration: 0.2 }}
           >
-            {renderView()}
+            <Routes location={location}>
+              <Route path="/login" element={user ? <Navigate to="/" replace /> : <Login onLogin={handleLogin} onRegister={goToRegister} />} />
+              <Route path="/register" element={user ? <Navigate to="/" replace /> : <Register onBack={goToLogin} onRegister={handleLogin} />} />
+              
+              <Route path="/" element={
+                <ProtectedRoute user={user}>
+                  {user?.role === 'RESEARCHER' ? <ResearcherDashboard user={user} onUpdateUser={setUser} /> :
+                   user?.role === 'REVIEWER' ? <ReviewerDashboard user={user} /> :
+                   <AdminDashboard user={user!} />}
+                </ProtectedRoute>
+              } />
+
+              <Route path="/protocol/new" element={
+                <ProtectedRoute user={user} allowedRoles={['RESEARCHER']}>
+                  <ProtocolForm user={user!} protocolId={null} onBack={goHome} onSave={goHome} />
+                </ProtectedRoute>
+              } />
+
+              <Route path="/protocol/edit/:id" element={
+                <ProtectedRoute user={user} allowedRoles={['RESEARCHER']}>
+                  <ProtocolFormWrapper user={user!} />
+                </ProtectedRoute>
+              } />
+
+              <Route path="*" element={<Navigate to="/" replace />} />
+            </Routes>
           </motion.div>
         </AnimatePresence>
       </main>
@@ -162,5 +212,13 @@ export default function App() {
         </div>
       </footer>
     </div>
+  );
+}
+
+export default function App() {
+  return (
+    <Router>
+      <NavigationWrapper />
+    </Router>
   );
 }

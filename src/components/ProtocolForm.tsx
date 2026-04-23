@@ -7,6 +7,7 @@ import React, { useState, useEffect, useRef } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
 import { dbService } from '../dbService';
 import { Protocol, User } from '../types';
+import { generateScreeningWord } from '../utils/wordGenerator';
 import { 
   ArrowLeft, 
   Save, 
@@ -20,7 +21,8 @@ import {
   ChevronLeft,
   AlertCircle,
   Loader2,
-  RefreshCw
+  RefreshCw,
+  Download
 } from 'lucide-react';
 
 interface ProtocolFormProps {
@@ -85,6 +87,8 @@ export default function ProtocolForm({ user, protocolId, onBack, onSave }: Proto
   const [step, setStep] = useState(1);
   const [showSubmitConfirm, setShowSubmitConfirm] = useState(false);
   const [showSaveDraftConfirm, setShowSaveDraftConfirm] = useState(false);
+  const [showFinalSuccess, setShowFinalSuccess] = useState(false);
+  const [submittedRegNumber, setSubmittedRegNumber] = useState('');
   const [fileUploadError, setFileUploadError] = useState<string | null>(null);
   const [isSaving, setIsSaving] = useState(false);
   const [memberList, setMemberList] = useState<string[]>([]);
@@ -124,6 +128,7 @@ export default function ProtocolForm({ user, protocolId, onBack, onSave }: Proto
       psp: '',
       ic: '',
       instruments: '',
+      screeningForm: '',
       supportingDocs: [],
       paymentProof: '',
     }
@@ -146,13 +151,17 @@ export default function ProtocolForm({ user, protocolId, onBack, onSave }: Proto
 
   // Sync memberList to formData.generalInfo.members whenever it changes
   useEffect(() => {
-    setFormData(prev => ({
-      ...prev,
-      generalInfo: {
-        ...prev.generalInfo!,
-        members: memberList.join('\n')
-      }
-    }));
+    setFormData(prev => {
+      const newMembers = memberList.join('\n');
+      if (prev.generalInfo?.members === newMembers) return prev;
+      return {
+        ...prev,
+        generalInfo: {
+          ...prev.generalInfo!,
+          members: newMembers
+        }
+      };
+    });
   }, [memberList]);
 
   const handleAddMember = () => {
@@ -192,8 +201,13 @@ export default function ProtocolForm({ user, protocolId, onBack, onSave }: Proto
     setIsSaving(false);
     setShowSaveDraftConfirm(false);
     if (success) {
-      alert(isSubmit ? "Protokol berhasil diajukan!" : "Draft berhasil disimpan!");
-      onSave();
+      if (isSubmit) {
+        setSubmittedRegNumber(updated.registrationNumber);
+        setShowFinalSuccess(true);
+      } else {
+        alert("Draft berhasil disimpan!");
+        onSave();
+      }
     } else {
       alert("Gagal menyimpan protokol. Silakan coba lagi.");
     }
@@ -552,27 +566,34 @@ export default function ProtocolForm({ user, protocolId, onBack, onSave }: Proto
   );
 
   const renderStep2 = () => (
-    <div className="space-y-8">
-      <h3 className="text-sm font-bold text-unair-blue uppercase tracking-wider border-b border-border-color pb-2 mb-6">B. Skrening Protokol Penelitian</h3>
-      <p className="text-[10px] text-text-muted font-bold uppercase tracking-widest italic">Wajib diisi secara lengkap sesuai dengan protokol penelitian Anda.</p>
-      
-      <div className="space-y-10">
-        {SCREENING_QUESTIONS.map((q, i) => (
-          <div key={i} className="space-y-3 bg-bg-light/30 p-5 rounded-2xl border border-border-color">
-            <label className="block text-xs font-bold text-text-main">
-              {i + 1}. {q}
-            </label>
-            <textarea 
-              value={formData.screening?.[i] || ''}
-              onChange={(e) => setFormData({
-                ...formData, 
-                screening: { ...formData.screening, [i]: e.target.value }
-              })}
-              className="w-full px-4 py-3 rounded-xl border border-border-color focus:outline-none focus:ring-2 focus:ring-unair-blue/5 bg-white min-h-[80px] text-sm"
-              placeholder="Ketik jawaban Anda di sini..."
-            />
-          </div>
-        ))}
+    <div className="space-y-8 py-6 text-center">
+      <div className="max-w-xl mx-auto space-y-6">
+        <div className="w-20 h-20 bg-blue-50 rounded-full flex items-center justify-center mx-auto mb-6">
+          <FileText className="w-10 h-10 text-unair-blue" />
+        </div>
+        
+        <h3 className="text-xl font-bold text-unair-blue uppercase tracking-wider">B. Form Skrening Protokol Penelitian</h3>
+        
+        <div className="bg-bg-light/30 p-6 rounded-2xl border border-border-color text-left space-y-4">
+          <p className="text-sm text-text-main font-medium leading-relaxed">
+            Sesuai kebijakan terbaru, pengisian skrening protokol dilakukan melalui file Word yang telah kami sediakan untuk kenyamanan Anda.
+          </p>
+          <ul className="text-xs text-text-muted space-y-2 list-disc pl-5 font-medium">
+            <li>Unduh file template melalui tombol di bawah ini.</li>
+            <li>Isi detail pertanyaan secara lengkap di komputer Anda.</li>
+            <li>Simpan file tersebut dalam format <strong>PDF</strong> setelah selesai.</li>
+            <li>Unggah file tersebut pada tahap <strong>Lampiran Dokumen</strong> berikutnya.</li>
+          </ul>
+        </div>
+
+        <button 
+          type="button"
+          onClick={() => generateScreeningWord(SCREENING_QUESTIONS)}
+          className="flex items-center gap-3 px-8 py-4 bg-unair-blue text-white rounded-2xl text-[11px] font-bold uppercase tracking-widest hover:bg-unair-blue/90 transition-all shadow-lg hover:shadow-unair-blue/20 mx-auto"
+        >
+          <Download className="w-5 h-5" />
+          Unduh Form Skrening (.docx)
+        </button>
       </div>
     </div>
   );
@@ -580,6 +601,14 @@ export default function ProtocolForm({ user, protocolId, onBack, onSave }: Proto
   const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file || !currentUploadKey) return;
+
+    // File Size Validation (Max 5MB)
+    const MAX_FILE_SIZE = 5 * 1024 * 1024; // 5MB
+    if (file.size > MAX_FILE_SIZE) {
+      setFileUploadError("Ukuran file terlalu besar. Maksimal 5MB.");
+      if (fileInputRef.current) fileInputRef.current.value = '';
+      return;
+    }
 
     const validTypes = ['application/pdf', 'image/jpeg', 'image/png', 'image/jpg'];
     if (!validTypes.includes(file.type)) {
@@ -623,6 +652,7 @@ export default function ProtocolForm({ user, protocolId, onBack, onSave }: Proto
       <div className="grid grid-cols-1 gap-4">
         {[
           { key: 'proposal', label: 'Pengesahan Proposal', required: true },
+          { key: 'screeningForm', label: 'Form Skrening Protokol (Hasil Unduhan B)', required: true },
           { key: 'psp', label: 'Penjelasan Sebelum Persetujuan (PSP)', required: true },
           { key: 'ic', label: 'Informed Consent (IC)', required: true },
           { key: 'instruments', label: 'Instrumen Penelitian', required: true },
@@ -724,6 +754,7 @@ export default function ProtocolForm({ user, protocolId, onBack, onSave }: Proto
           <h4 className="text-[10px] uppercase tracking-widest font-bold text-unair-blue mb-4 border-b border-border-color pb-2">Ringkasan Dokumen</h4>
           <ul className="space-y-3 text-xs font-bold text-text-main">
             <li className="flex items-center gap-3"><CheckCircle2 className="w-4 h-4 text-accent-green" /> Protokol Terisi Lengkap</li>
+            <li className="flex items-center gap-3"><CheckCircle2 className="w-4 h-4 text-accent-green" /> Form Skrening Terunggah</li>
             <li className="flex items-center gap-3"><CheckCircle2 className="w-4 h-4 text-accent-green" /> Proposal Riset Terunggah</li>
             <li className="flex items-center gap-3"><CheckCircle2 className="w-4 h-4 text-accent-green" /> PSP & Informed Consent Terunggah</li>
             <li className="flex items-center gap-3"><CheckCircle2 className="w-4 h-4 text-accent-green" /> Bukti Pembayaran Terunggah</li>
@@ -824,6 +855,49 @@ export default function ProtocolForm({ user, protocolId, onBack, onSave }: Proto
           ) : null}
         </div>
       </div>
+
+      {/* Final Success Modal */}
+      <AnimatePresence>
+        {showFinalSuccess && (
+          <div className="fixed inset-0 bg-unair-blue/40 backdrop-blur-sm z-[200] flex items-center justify-center p-4">
+            <motion.div 
+              initial={{ opacity: 0, scale: 0.9, y: 20 }}
+              animate={{ opacity: 1, scale: 1, y: 0 }}
+              className="bg-white rounded-[32px] shadow-2xl w-full max-w-lg p-10 text-center border border-white/20 relative overflow-hidden"
+            >
+              {/* Background Decoration */}
+              <div className="absolute top-0 left-0 w-full h-2 bg-gradient-to-r from-accent-green via-unair-blue to-accent-green"></div>
+              <div className="absolute -top-24 -right-24 w-48 h-48 bg-accent-green/5 rounded-full blur-3xl"></div>
+              
+              <div className="w-24 h-24 bg-accent-green/10 rounded-full flex items-center justify-center mx-auto mb-8 shadow-inner border border-accent-green/20">
+                <CheckCircle2 className="w-12 h-12 text-accent-green" />
+              </div>
+              
+              <h3 className="text-2xl font-bold text-unair-blue mb-4 tracking-tight">Pengajuan Berhasil!</h3>
+              
+              <div className="space-y-4 mb-10">
+                <p className="text-sm text-text-main font-medium leading-relaxed">
+                  Selamat, Anda telah berhasil mengajukan protokol penelitian dengan nomor registrasi:
+                </p>
+                <div className="bg-bg-light/50 py-3 px-6 rounded-2xl border border-dashed border-unair-blue/30 inline-block">
+                  <span className="text-lg font-mono font-bold text-unair-blue tracking-wider">{submittedRegNumber}</span>
+                </div>
+                <p className="text-xs text-text-muted font-bold uppercase tracking-widest leading-loose pt-2">
+                  Proses Review akan dilaksanakan selama<br/>
+                  <span className="text-unair-blue">4 - 7 hari kerja</span>
+                </p>
+              </div>
+
+              <button 
+                onClick={onSave}
+                className="w-full py-5 bg-unair-blue text-white rounded-2xl text-[11px] font-bold uppercase tracking-widest hover:bg-unair-blue/90 transition-all shadow-xl shadow-unair-blue/20 active:scale-95"
+              >
+                Kembali ke Beranda
+              </button>
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
 
       {/* Save Draft Confirmation Modal */}
       {showSaveDraftConfirm && (

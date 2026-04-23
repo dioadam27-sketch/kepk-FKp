@@ -18,7 +18,7 @@ const SECRET_KEY = 'SIM_KEPK_FKP_UNAIR_SECURE_2024'; // Harus sama dengan VITE_A
 function setupDatabase() {
   const ss = SpreadsheetApp.openById(SPREADSHEET_ID);
   const tables = {
-    'Users': ['id', 'email', 'password', 'role', 'name', 'place_of_birth', 'date_of_birth', 'gender', 'last_education', 'status', 'institution', 'phone'],
+    'Users': ['id', 'email', 'password', 'role', 'name', 'place_of_birth', 'date_of_birth', 'gender', 'last_education', 'status', 'institution', 'phone', 'ethics_training', 'ethics_training_file', 'confidentiality_agreement_file', 'is_profile_complete'],
     'Protocols': ['id', 'researcher_id', 'registration_number', 'title', 'status', 'classification', 'submitted_at', 'main_researcher', 'phone', 'members', 'organizing_institution', 'collaboration_type', 'collaboration_details', 'design', 'design_details', 'location', 'time', 'data_collection_time', 'previous_submission', 'previous_submission_result', 'research_team_tasks'],
     'Protocol_Screening': ['protocol_id', 'question_index', 'answer'],
     'Protocol_Attachments': ['protocol_id', 'proposal', 'psp', 'ic', 'instruments', 'payment_proof', 'supporting_docs'],
@@ -29,6 +29,14 @@ function setupDatabase() {
   for (let tableName in tables) {
     let sheet = ss.getSheetByName(tableName) || ss.insertSheet(tableName);
     if (sheet.getLastRow() === 0) sheet.appendRow(tables[tableName]);
+    else {
+      // Auto-update headers if new columns added
+      const existingHeaders = sheet.getRange(1, 1, 1, sheet.getLastColumn()).getValues()[0];
+      const targetHeaders = tables[tableName];
+      if (existingHeaders.length < targetHeaders.length) {
+        sheet.getRange(1, 1, 1, targetHeaders.length).setValues([targetHeaders]);
+      }
+    }
   }
 }
 
@@ -44,10 +52,13 @@ function doPost(e) {
     
     switch(action) {
       case 'login': result = handleLogin(input); break;
+      case 'google_login': result = handleGoogleLogin(input); break;
       case 'register': result = handleRegister(input); break;
       case 'update_profile': result = handleUpdateProfile(input); break;
+      case 'change_password': result = handleChangePassword(input); break;
       case 'save_protocol': result = handleSaveProtocol(input); break;
       case 'assign_reviewer': result = handleAssignReviewerAction(input); break;
+      case 'unassign_reviewer': result = handleUnassignReviewerAction(input); break;
       case 'upload_file': result = handleUploadFile(input); break;
       default: result = { error: "Action not found" };
     }
@@ -130,6 +141,37 @@ function handleLogin(input) {
   throw new Error("Kredensial tidak valid");
 }
 
+function handleGoogleLogin(input) {
+  const email = String(input.email || '').trim();
+  const name = String(input.name || '').trim();
+  const role = String(input.role || 'RESEARCHER').trim();
+  
+  const ss = SpreadsheetApp.openById(SPREADSHEET_ID);
+  const sheet = ss.getSheetByName('Users');
+  const data = sheet.getDataRange().getValues();
+  const headers = data[0];
+  
+  // Check if email exists first
+  for (let i = 1; i < data.length; i++) {
+    if (String(data[i][headers.indexOf('email')]).trim() === email) {
+      return formatUser(data[i], headers);
+    }
+  }
+  
+  // Auto-register
+  const id = 'usr_' + Math.random().toString(36).substr(2, 9);
+  const newRow = new Array(headers.length).fill('');
+  newRow[headers.indexOf('id')] = id;
+  newRow[headers.indexOf('email')] = email;
+  newRow[headers.indexOf('role')] = role;
+  newRow[headers.indexOf('name')] = name;
+  newRow[headers.indexOf('institution')] = 'FKp UNAIR';
+  newRow[headers.indexOf('is_profile_complete')] = false;
+  
+  sheet.appendRow(newRow);
+  return formatUser(newRow, headers);
+}
+
 function handleRegister(input) {
   const ss = SpreadsheetApp.openById(SPREADSHEET_ID);
   const sheet = ss.getSheetByName('Users');
@@ -158,7 +200,30 @@ function handleUpdateProfile(input) {
       sheet.getRange(rowIndex, headers.indexOf('status') + 1).setValue(p.status);
       sheet.getRange(rowIndex, headers.indexOf('institution') + 1).setValue(p.institution);
       sheet.getRange(rowIndex, headers.indexOf('phone') + 1).setValue(p.phone);
+      
+      // New Reviewer Fields
+      if (headers.indexOf('ethics_training') > -1) sheet.getRange(rowIndex, headers.indexOf('ethics_training') + 1).setValue(p.ethicsTraining || '');
+      if (headers.indexOf('ethics_training_file') > -1) sheet.getRange(rowIndex, headers.indexOf('ethics_training_file') + 1).setValue(p.ethicsTrainingFile || '');
+      if (headers.indexOf('confidentiality_agreement_file') > -1) sheet.getRange(rowIndex, headers.indexOf('confidentiality_agreement_file') + 1).setValue(p.confidentialityAgreementFile || '');
+      if (headers.indexOf('is_profile_complete') > -1) sheet.getRange(rowIndex, headers.indexOf('is_profile_complete') + 1).setValue(p.isProfileComplete ? 1 : 0);
+      
       return formatUser(sheet.getRange(rowIndex, 1, 1, headers.length).getValues()[0], headers);
+    }
+  }
+  throw new Error("User not found");
+}
+
+function handleChangePassword(input) {
+  const ss = SpreadsheetApp.openById(SPREADSHEET_ID);
+  const sheet = ss.getSheetByName('Users');
+  const data = sheet.getDataRange().getValues();
+  const headers = data[0];
+  for (let i = 1; i < data.length; i++) {
+    if (data[i][headers.indexOf('id')] === input.userId) {
+      const rowIndex = i + 1;
+      const hashedPass = hashPassword(input.newPassword);
+      sheet.getRange(rowIndex, headers.indexOf('password') + 1).setValue(hashedPass);
+      return { success: true };
     }
   }
   throw new Error("User not found");
@@ -186,6 +251,18 @@ function handleAssignReviewerAction(input) {
   const rSheet = ss.getSheetByName('Protocol_Reviewers');
   rSheet.appendRow([input.protocolId, input.reviewerId]);
   
+  return { success: true };
+}
+
+function handleUnassignReviewerAction(input) {
+  const ss = SpreadsheetApp.openById(SPREADSHEET_ID);
+  const rSheet = ss.getSheetByName('Protocol_Reviewers');
+  const data = rSheet.getDataRange().getValues();
+  for (let i = data.length - 1; i >= 1; i--) {
+    if (data[i][0] === input.protocolId && data[i][1] === input.reviewerId) {
+      rSheet.deleteRow(i + 1);
+    }
+  }
   return { success: true };
 }
 
@@ -388,13 +465,22 @@ function hashPassword(password) {
 
 function formatUser(row, headers) {
   return {
-    id: String(row[headers.indexOf('id')]).trim(), email: String(row[headers.indexOf('email')]).trim(),
-    role: String(row[headers.indexOf('role')]).trim(), name: String(row[headers.indexOf('name')]).trim(),
+    id: String(row[headers.indexOf('id')]).trim(), 
+    email: String(row[headers.indexOf('email')]).trim(),
+    role: String(row[headers.indexOf('role')]).trim(), 
+    name: String(row[headers.indexOf('name')]).trim(),
     profile: {
-      placeOfBirth: row[headers.indexOf('place_of_birth')] || '', dateOfBirth: row[headers.indexOf('date_of_birth')] || '',
-      gender: row[headers.indexOf('gender')] || '', lastEducation: row[headers.indexOf('last_education')] || '',
-      status: row[headers.indexOf('status')] || '', institution: row[headers.indexOf('institution')] || '',
-      phone: row[headers.indexOf('phone')] || ''
+      placeOfBirth: row[headers.indexOf('place_of_birth')] || '', 
+      dateOfBirth: row[headers.indexOf('date_of_birth')] || '',
+      gender: row[headers.indexOf('gender')] || '', 
+      lastEducation: row[headers.indexOf('last_education')] || '',
+      status: row[headers.indexOf('status')] || '', 
+      institution: row[headers.indexOf('institution')] || '',
+      phone: row[headers.indexOf('phone')] || '',
+      ethicsTraining: headers.indexOf('ethics_training') > -1 ? row[headers.indexOf('ethics_training')] || '' : '',
+      ethicsTrainingFile: headers.indexOf('ethics_training_file') > -1 ? row[headers.indexOf('ethics_training_file')] || '' : '',
+      confidentialityAgreementFile: headers.indexOf('confidentiality_agreement_file') > -1 ? row[headers.indexOf('confidentiality_agreement_file')] || '' : '',
+      isProfileComplete: headers.indexOf('is_profile_complete') > -1 ? !!row[headers.indexOf('is_profile_complete')] : false
     }
   };
 }

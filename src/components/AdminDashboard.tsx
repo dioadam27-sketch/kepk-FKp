@@ -23,6 +23,7 @@ import {
   ChevronRight,
   ShieldCheck,
   XCircle,
+  X,
   User as UserIcon
 } from 'lucide-react';
 import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, PieChart, Pie, Cell } from 'recharts';
@@ -40,36 +41,56 @@ export default function AdminDashboard({ user }: AdminDashboardProps) {
   const [activeTab, setActiveTab] = useState<'REKAP' | 'LAPORAN' | 'PENGGUNA'>('REKAP');
   const [activeReport, setActiveReport] = useState<string | null>(null);
   const [isAssigning, setIsAssigning] = useState(false);
+  const [isAddingReviewer, setIsAddingReviewer] = useState(false);
+  const [newReviewer, setNewReviewer] = useState({ name: '', email: '', password: '' });
 
-  // Compute Data Laporan
-  const getMonthlyData = () => {
+  // Compute Data Laporan (Memoized to prevent infinite re-renders with Recharts)
+  const monthlyData = React.useMemo(() => {
     const counts: Record<string, number> = {};
     protocols.forEach(p => {
        if (!p.submittedAt) return;
-       const d = new Date(p.submittedAt);
-       const month = d.toLocaleString('id-ID', { month: 'short', year: 'numeric' });
-       counts[month] = (counts[month] || 0) + 1;
+       // Handle possible invalid dates or different formats
+       try {
+         const d = new Date(p.submittedAt.split('-').reverse().join('-') || p.submittedAt);
+         const month = d.toLocaleString('id-ID', { month: 'short', year: 'numeric' });
+         if (month !== 'Invalid Date') {
+           counts[month] = (counts[month] || 0) + 1;
+         }
+       } catch (e) {
+         console.warn("Invalid date format", p.submittedAt);
+       }
     });
     return Object.keys(counts).map(k => ({ name: k, total: counts[k] }));
-  };
+  }, [protocols]);
 
-  const getDemographicData = () => {
+  const demographicData = React.useMemo(() => {
     const counts: Record<string, number> = {};
     allUsers.filter(u => u.role === 'RESEARCHER').forEach(u => {
        const inst = u.profile?.institution || 'FKp UNAIR';
        counts[inst] = (counts[inst] || 0) + 1;
     });
     return Object.keys(counts).map(k => ({ name: k, value: counts[k] }));
-  };
+  }, [allUsers]);
   
   const COLORS = ['#0056A6', '#FFB703', '#A855F7', '#10B981', '#F97316'];
 
-  const getReviewerPerformance = () => {
+  const reviewerPerformance = React.useMemo(() => {
     return reviewers.map(r => {
        const assigned = protocols.filter(p => p.assignedReviewers?.includes(r.id));
        const finished = assigned.filter(p => p.status === 'APPROVED' || p.status === 'REJECTED' || p.status === 'REVISION_REQUIRED');
        return { name: r.name, institution: r.profile?.institution || '-', total: assigned.length, finished: finished.length };
     }).sort((a,b) => b.total - a.total);
+  }, [reviewers, protocols]);
+
+  const formatDate = (dateStr?: string) => {
+    if (!dateStr) return '-';
+    try {
+      const d = new Date(dateStr.includes('T') ? dateStr : dateStr.split('-').reverse().join('-'));
+      if (isNaN(d.getTime())) return dateStr;
+      return d.toLocaleDateString('id-ID', { day: 'numeric', month: 'short', year: 'numeric' });
+    } catch (e) {
+      return dateStr;
+    }
   };
 
   useEffect(() => {
@@ -104,6 +125,21 @@ export default function AdminDashboard({ user }: AdminDashboardProps) {
     }
   };
 
+  const handleRemoveReviewer = async (protocolId: string, reviewerId: string) => {
+    if (!confirm('Lepas penugasan reviewer ini?')) return;
+    
+    const success = await dbService.unassignReviewer(protocolId, reviewerId);
+    if (success) {
+      setProtocols(prev => prev.map(p => 
+        p.id === protocolId 
+          ? { ...p, assignedReviewers: (p.assignedReviewers || []).filter(rid => rid !== reviewerId) } 
+          : p
+      ));
+    } else {
+      alert("Gagal melepas penugasan dari server.");
+    }
+  };
+
   const handleSetClassification = async (protocolId: string, classification: ReviewClassification) => {
     const p = await dbService.getProtocolById(protocolId);
     if (p) {
@@ -113,6 +149,45 @@ export default function AdminDashboard({ user }: AdminDashboardProps) {
         const allProtocols = await dbService.getProtocols();
         setProtocols(allProtocols);
       }
+    }
+  };
+
+  const handleAddReviewer = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setIsAssigning(true);
+    try {
+      const userData: Partial<User> = {
+        name: newReviewer.name,
+        email: newReviewer.email,
+        password: newReviewer.password,
+        role: 'REVIEWER',
+        profile: {
+          institution: 'FKp UNAIR',
+          isProfileComplete: false,
+          placeOfBirth: '',
+          dateOfBirth: '',
+          gender: 'Laki-laki',
+          lastEducation: '',
+          status: 'Reviewer',
+          phone: ''
+        }
+      };
+      
+      const success = await dbService.register(userData);
+      if (success) {
+        alert("Reviewer berhasil didaftarkan!");
+        const users = await dbService.getUsers();
+        setAllUsers(users);
+        setReviewers(users.filter(u => u.role === 'REVIEWER'));
+        setIsAddingReviewer(false);
+        setNewReviewer({ name: '', email: '', password: '' });
+      } else {
+        alert("Gagal mendaftarkan reviewer.");
+      }
+    } catch (err) {
+      alert("Terjadi kesalahan.");
+    } finally {
+      setIsAssigning(false);
     }
   };
 
@@ -213,7 +288,7 @@ export default function AdminDashboard({ user }: AdminDashboardProps) {
                   <tr key={p.id} className="hover:bg-bg-light/30 transition-colors group">
                     <td className="px-5 py-4">
                       <p className="text-xs font-bold text-unair-blue">{p.registrationNumber}</p>
-                      <p className="text-[9px] text-text-muted uppercase tracking-wider">{p.submittedAt}</p>
+                      <p className="text-[9px] text-text-muted uppercase tracking-wider font-semibold">{formatDate(p.submittedAt)}</p>
                     </td>
                     <td className="px-5 py-4">
                       <button 
@@ -221,17 +296,17 @@ export default function AdminDashboard({ user }: AdminDashboardProps) {
                           const protocolResearcher = allUsers.find(u => u.name === p.generalInfo.mainResearcher || u.id === p.researcherId);
                           if (protocolResearcher) setSelectedUser(protocolResearcher);
                         }}
-                        className="text-xs font-semibold text-unair-blue hover:underline text-left"
+                        className="text-xs font-bold text-unair-blue hover:underline text-left block leading-tight"
                       >
                         {p.generalInfo.mainResearcher}
                       </button>
-                      <p className="text-[9px] text-text-muted truncate max-w-[200px]">{p.title}</p>
+                      <p className="text-[9px] text-text-muted font-medium truncate max-w-[180px] mt-0.5">{p.title}</p>
                     </td>
                     <td className="px-5 py-4">
                       <select 
                         value={p.classification || ''}
                         onChange={(e) => handleSetClassification(p.id, e.target.value as ReviewClassification)}
-                        className="text-[9px] font-bold uppercase tracking-wider bg-white border border-border-color rounded-lg px-2 py-1 outline-none focus:ring-1 focus:ring-unair-blue/30"
+                        className="text-[9px] font-bold uppercase tracking-wider bg-white border border-border-color rounded-lg px-2 py-1.5 outline-none focus:ring-1 focus:ring-unair-blue/30"
                       >
                         <option value="">Pilih</option>
                         <option value="CONTINUING">Continuing</option>
@@ -241,17 +316,37 @@ export default function AdminDashboard({ user }: AdminDashboardProps) {
                       </select>
                     </td>
                     <td className="px-5 py-4">
-                      <div className="flex -space-x-1.5 overflow-hidden">
-                        {(p.assignedReviewers || []).map((rid, i) => (
-                          <div key={i} className="inline-block h-6 w-6 rounded-full ring-2 ring-white bg-unair-blue text-white flex items-center justify-center text-[8px] font-bold uppercase" title={reviewers.find(r => r.id === rid)?.name}>
-                            {reviewers.find(r => r.id === rid)?.name.charAt(0)}
-                          </div>
-                        ))}
+                      <div className="flex flex-col gap-1.5">
+                        <div className="flex flex-wrap gap-1">
+                           {(p.assignedReviewers || []).length > 0 ? (
+                            (p.assignedReviewers || []).map((rid) => {
+                              const rev = reviewers.find(r => r.id === rid);
+                              return (
+                                <span key={rid} className="inline-flex items-center gap-1 px-1.5 py-0.5 bg-unair-blue/5 text-unair-blue rounded text-[9px] font-bold border border-unair-blue/10">
+                                  {rev ? rev.name : 'Unknown'}
+                                  <button 
+                                    onClick={(e) => {
+                                      e.stopPropagation();
+                                      handleRemoveReviewer(p.id, rid);
+                                    }}
+                                    className="hover:text-red-500 transition-colors ml-0.5"
+                                    title="Lepas Reviewer"
+                                  >
+                                    <X className="w-2.5 h-2.5" />
+                                  </button>
+                                </span>
+                              );
+                            })
+                          ) : (
+                            <span className="text-[9px] text-text-muted italic font-medium">Belum Ditugaskan</span>
+                          )}
+                        </div>
                         <button 
                           onClick={() => setSelectedProtocol(p)}
-                          className="inline-block h-6 w-6 rounded-full ring-2 ring-white bg-bg-light text-text-muted flex items-center justify-center hover:bg-unair-blue hover:text-white transition-all shadow-sm"
+                          className="flex items-center gap-1 text-[8px] font-bold uppercase tracking-widest text-unair-blue hover:text-unair-gold transition-all w-fit group"
                         >
-                          <Plus className="w-3 h-3" />
+                          <Plus className="w-2.5 h-2.5 group-hover:scale-125 transition-transform" />
+                          <span>{(p.assignedReviewers || []).length > 0 ? 'Tambah' : 'Tugaskan'}</span>
                         </button>
                       </div>
                     </td>
@@ -297,7 +392,7 @@ export default function AdminDashboard({ user }: AdminDashboardProps) {
               {activeReport === 'Protokol per Bulan' && (
                  <div className="h-80 w-full bg-bg-light/30 border border-border-color rounded-2xl p-6">
                     <ResponsiveContainer width="100%" height="100%">
-                       <BarChart data={getMonthlyData()}>
+                       <BarChart data={monthlyData}>
                          <XAxis dataKey="name" fontSize={10} tickMargin={10} axisLine={false} tickLine={false} />
                          <YAxis fontSize={10} axisLine={false} tickLine={false}/>
                          <Tooltip cursor={{fill: '#f3f4f6'}} contentStyle={{borderRadius: '12px', fontSize: '12px', border: 'none', boxShadow: '0 4px 6px -1px rgb(0 0 0 / 0.1)'}} />
@@ -310,10 +405,10 @@ export default function AdminDashboard({ user }: AdminDashboardProps) {
               {activeReport === 'Demografi Peneliti' && (
                  <div className="flex flex-col items-center justify-center bg-bg-light/30 border border-border-color rounded-2xl p-6">
                     <div className="h-64 w-full">
-                      <ResponsiveContainer width="100%" height="100%">
+                       <ResponsiveContainer width="100%" height="100%">
                          <PieChart>
-                           <Pie data={getDemographicData()} cx="50%" cy="50%" innerRadius={60} outerRadius={80} paddingAngle={5} dataKey="value">
-                             {getDemographicData().map((entry, index) => (
+                           <Pie data={demographicData} cx="50%" cy="50%" innerRadius={60} outerRadius={80} paddingAngle={5} dataKey="value">
+                             {demographicData.map((_entry, index) => (
                                <Cell key={`cell-${index}`} fill={COLORS[index % COLORS.length]} />
                              ))}
                            </Pie>
@@ -322,7 +417,7 @@ export default function AdminDashboard({ user }: AdminDashboardProps) {
                       </ResponsiveContainer>
                     </div>
                     <div className="flex flex-wrap justify-center gap-4 mt-6">
-                       {getDemographicData().map((entry, index) => (
+                       {demographicData.map((entry, index) => (
                           <div key={index} className="flex items-center gap-2">
                              <div className="w-3 h-3 rounded-full" style={{backgroundColor: COLORS[index % COLORS.length]}}/>
                              <span className="text-[10px] font-bold text-text-muted uppercase tracking-widest">{entry.name} ({entry.value})</span>
@@ -332,7 +427,7 @@ export default function AdminDashboard({ user }: AdminDashboardProps) {
                  </div>
               )}
 
-              {activeReport === 'Kinerja Reviewer' && (
+               {activeReport === 'Kinerja Reviewer' && (
                  <div className="overflow-x-auto border border-border-color rounded-2xl bg-bg-light/30">
                     <table className="w-full text-left">
                        <thead>
@@ -344,7 +439,7 @@ export default function AdminDashboard({ user }: AdminDashboardProps) {
                           </tr>
                        </thead>
                        <tbody className="divide-y divide-border-color">
-                          {getReviewerPerformance().map((rev, i) => (
+                          {reviewerPerformance.map((rev, i) => (
                              <tr key={i} className="hover:bg-white transition-colors">
                                 <td className="px-5 py-4 text-center">
                                    <span className={`inline-flex items-center justify-center w-6 h-6 rounded-full text-[10px] font-bold ${i === 0 ? 'bg-unair-gold text-white' : i === 1 ? 'bg-gray-300 text-gray-700' : 'bg-orange-200 text-orange-800'}`}>
@@ -378,49 +473,128 @@ export default function AdminDashboard({ user }: AdminDashboardProps) {
             </div>
           )
         ) : activeTab === 'PENGGUNA' ? (
-          <div className="overflow-x-auto">
-            <table className="w-full text-left border-collapse">
-              <thead>
-                <tr className="bg-bg-light/50">
-                  <th className="px-5 py-3 text-[10px] uppercase tracking-widest font-bold text-text-muted">Role</th>
-                  <th className="px-5 py-3 text-[10px] uppercase tracking-widest font-bold text-text-muted">Nama</th>
-                  <th className="px-5 py-3 text-[10px] uppercase tracking-widest font-bold text-text-muted">Email</th>
-                  <th className="px-5 py-3 text-[10px] uppercase tracking-widest font-bold text-text-muted">Institusi</th>
-                  <th className="px-5 py-3 text-[10px] uppercase tracking-widest font-bold text-text-muted text-right">Aksi</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-border-color">
-                {allUsers.map((u) => (
-                  <tr key={u.id} className="hover:bg-bg-light/30 transition-colors group">
-                    <td className="px-5 py-4">
-                      <span className={`px-2 py-1 rounded text-[9px] font-bold uppercase tracking-wider ${
-                        u.role === 'ADMIN' ? 'bg-purple-100 text-purple-700' :
-                        u.role === 'REVIEWER' ? 'bg-orange-100 text-orange-700' :
-                        'bg-blue-100 text-blue-700'
-                      }`}>
-                        {u.role}
-                      </span>
-                    </td>
-                    <td className="px-5 py-4">
-                      <p className="text-xs font-bold text-text-main">{u.name}</p>
-                    </td>
-                    <td className="px-5 py-4 text-xs text-text-muted">{u.email}</td>
-                    <td className="px-5 py-4 text-xs text-text-muted">{u.profile?.institution || '-'}</td>
-                    <td className="px-5 py-4 text-right">
-                      <button 
-                        onClick={() => setSelectedUser(u)}
-                        className="px-3 py-1.5 bg-bg-light text-unair-blue rounded-lg text-[10px] font-bold uppercase tracking-wider hover:bg-unair-blue hover:text-white transition-all shadow-sm"
-                      >
-                        Lihat CV
-                      </button>
-                    </td>
+          <div>
+            <div className="p-5 border-b border-border-color flex justify-between items-center bg-bg-light/30">
+              <h3 className="text-sm font-bold text-unair-blue uppercase tracking-tight">Manajemen Akun Pengguna</h3>
+              <button 
+                onClick={() => setIsAddingReviewer(true)}
+                className="flex items-center gap-2 px-4 py-2 bg-unair-blue text-white rounded-xl text-[10px] font-bold uppercase tracking-widest hover:bg-unair-blue/90 transition-all shadow-md"
+              >
+                <Plus className="w-3.5 h-3.5" />
+                Tambah Reviewer
+              </button>
+            </div>
+            <div className="overflow-x-auto">
+              <table className="w-full text-left border-collapse">
+                <thead>
+                  <tr className="bg-bg-light/50">
+                    <th className="px-5 py-3 text-[10px] uppercase tracking-widest font-bold text-text-muted">Role</th>
+                    <th className="px-5 py-3 text-[10px] uppercase tracking-widest font-bold text-text-muted">Nama</th>
+                    <th className="px-5 py-3 text-[10px] uppercase tracking-widest font-bold text-text-muted">Email</th>
+                    <th className="px-5 py-3 text-[10px] uppercase tracking-widest font-bold text-text-muted">Institusi</th>
+                    <th className="px-5 py-3 text-[10px] uppercase tracking-widest font-bold text-text-muted text-right">Aksi</th>
                   </tr>
-                ))}
-              </tbody>
-            </table>
+                </thead>
+                <tbody className="divide-y divide-border-color">
+                  {allUsers.map((u) => (
+                    <tr key={u.id} className="hover:bg-bg-light/30 transition-colors group">
+                      <td className="px-5 py-4">
+                        <span className={`px-2 py-1 rounded text-[9px] font-bold uppercase tracking-wider ${
+                          u.role === 'ADMIN' ? 'bg-purple-100 text-purple-700' :
+                          u.role === 'REVIEWER' ? 'bg-orange-100 text-orange-700' :
+                          'bg-blue-100 text-blue-700'
+                        }`}>
+                          {u.role}
+                        </span>
+                      </td>
+                      <td className="px-5 py-4">
+                        <p className="text-xs font-bold text-text-main">{u.name}</p>
+                      </td>
+                      <td className="px-5 py-4 text-xs text-text-muted">{u.email}</td>
+                      <td className="px-5 py-4 text-xs text-text-muted">{u.profile?.institution || '-'}</td>
+                      <td className="px-5 py-4 text-right">
+                        <button 
+                          onClick={() => setSelectedUser(u)}
+                          className="px-3 py-1.5 bg-bg-light text-unair-blue rounded-lg text-[10px] font-bold uppercase tracking-wider hover:bg-unair-blue hover:text-white transition-all shadow-sm"
+                        >
+                          Lihat CV
+                        </button>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
           </div>
         ) : null}
       </div>
+
+      {/* Modal Tambah Reviewer */}
+      {isAddingReviewer && (
+        <div className="fixed inset-0 bg-unair-blue/20 backdrop-blur-sm flex items-center justify-center p-6 z-[110]">
+          <div className="bg-white rounded-3xl w-full max-w-md p-8 shadow-2xl border border-border-color">
+            <div className="flex justify-between items-center mb-6">
+              <h3 className="text-xl font-bold text-unair-blue">Tambah Reviewer Baru</h3>
+              <button onClick={() => setIsAddingReviewer(false)} className="text-text-muted hover:text-red-500">
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+            
+            <form onSubmit={handleAddReviewer} className="space-y-4">
+              <div>
+                <label className="block text-[10px] uppercase tracking-widest font-bold mb-2 text-text-muted">Nama Lengkap</label>
+                <input 
+                  type="text" 
+                  required
+                  value={newReviewer.name}
+                  onChange={e => setNewReviewer({...newReviewer, name: e.target.value})}
+                  className="w-full px-4 py-3 rounded-xl border border-border-color focus:ring-2 focus:ring-unair-blue/10 outline-none text-sm"
+                  placeholder="Nama Lengkap dengan Gelar"
+                />
+              </div>
+              <div>
+                <label className="block text-[10px] uppercase tracking-widest font-bold mb-2 text-text-muted">Email</label>
+                <input 
+                  type="email" 
+                  required
+                  value={newReviewer.email}
+                  onChange={e => setNewReviewer({...newReviewer, email: e.target.value})}
+                  className="w-full px-4 py-3 rounded-xl border border-border-color focus:ring-2 focus:ring-unair-blue/10 outline-none text-sm"
+                  placeholder="Email aktif reviewer"
+                />
+              </div>
+              <div>
+                <label className="block text-[10px] uppercase tracking-widest font-bold mb-2 text-text-muted">Password Sementara</label>
+                <input 
+                  type="text" 
+                  required
+                  value={newReviewer.password}
+                  onChange={e => setNewReviewer({...newReviewer, password: e.target.value})}
+                  className="w-full px-4 py-3 rounded-xl border border-border-color focus:ring-2 focus:ring-unair-blue/10 outline-none text-sm"
+                  placeholder="Min 6 Karakter"
+                />
+              </div>
+              
+              <div className="pt-4 flex gap-3">
+                <button 
+                  type="button"
+                  onClick={() => setIsAddingReviewer(false)}
+                  className="flex-1 py-3 rounded-xl font-bold uppercase tracking-widest text-[10px] text-text-muted bg-bg-light hover:bg-gray-200 transition-all"
+                >
+                  Batal
+                </button>
+                <button 
+                  type="submit"
+                  disabled={isAssigning}
+                  className="flex-1 py-3 bg-unair-blue text-white rounded-xl font-bold uppercase tracking-widest text-[10px] hover:bg-unair-blue/90 transition-all shadow-md flex items-center justify-center gap-2"
+                >
+                  {isAssigning ? 'Memproses...' : 'Daftarkan Akun'}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
 
       {selectedProtocol && (
         <div className="fixed inset-0 bg-unair-blue/20 backdrop-blur-sm flex items-center justify-center p-6 z-[100]">
@@ -429,24 +603,40 @@ export default function AdminDashboard({ user }: AdminDashboardProps) {
             <p className="text-[10px] text-text-muted font-bold uppercase tracking-widest mb-6">Tugaskan reviewer untuk: {selectedProtocol.registrationNumber}</p>
             
             <div className="space-y-2 max-h-[300px] overflow-y-auto mb-8 pr-2 custom-scrollbar">
-              {reviewers.map((r) => (
-                <button
-                  key={r.id}
-                  disabled={isAssigning}
-                  onClick={() => handleAssignReviewer(selectedProtocol.id, r.id)}
-                  className="w-full flex items-center justify-between p-4 rounded-2xl border border-border-color hover:border-unair-blue hover:bg-unair-blue/5 transition-all text-left group disabled:opacity-50 disabled:cursor-not-allowed"
-                >
-                  <div className="flex-1">
-                    <p className="text-sm font-bold text-text-main group-hover:text-unair-blue">{r.name}</p>
-                    <p className="text-[10px] uppercase tracking-widest text-text-muted font-bold">{r.profile?.institution || 'FKp UNAIR'}</p>
-                  </div>
-                  {isAssigning ? (
-                    <div className="w-4 h-4 border-2 border-unair-blue/30 border-t-unair-blue rounded-full animate-spin"></div>
-                  ) : (
-                    <ChevronRight className="w-4 h-4 text-text-muted group-hover:text-unair-blue" />
-                  )}
-                </button>
-              ))}
+              {reviewers.map((r) => {
+                const isAlreadyAssigned = selectedProtocol?.assignedReviewers?.includes(r.id);
+                return (
+                  <button
+                    key={r.id}
+                    disabled={isAssigning || isAlreadyAssigned}
+                    onClick={() => handleAssignReviewer(selectedProtocol!.id, r.id)}
+                    className={`w-full flex items-center justify-between p-4 rounded-2xl border transition-all text-left group disabled:opacity-60 ${
+                      isAlreadyAssigned 
+                        ? 'bg-bg-light border-border-color cursor-not-allowed' 
+                        : 'border-border-color hover:border-unair-blue hover:bg-unair-blue/5 cursor-pointer'
+                    }`}
+                  >
+                    <div className="flex-1">
+                      <div className="flex items-center gap-2">
+                        <p className={`text-sm font-bold ${isAlreadyAssigned ? 'text-text-muted' : 'text-text-main group-hover:text-unair-blue'}`}>
+                          {r.name}
+                        </p>
+                        {isAlreadyAssigned && (
+                          <span className="text-[8px] bg-accent-green/10 text-accent-green px-1.5 py-0.5 rounded uppercase font-bold">Terpilih</span>
+                        )}
+                      </div>
+                      <p className="text-[10px] uppercase tracking-widest text-text-muted font-bold">{r.profile?.institution || 'FKp UNAIR'}</p>
+                    </div>
+                    {!isAlreadyAssigned && (
+                      isAssigning ? (
+                        <div className="w-4 h-4 border-2 border-unair-blue/30 border-t-unair-blue rounded-full animate-spin"></div>
+                      ) : (
+                        <Plus className="w-4 h-4 text-unair-blue group-hover:scale-125 transition-transform" />
+                      )
+                    )}
+                  </button>
+                );
+              })}
             </div>
 
             <button 
