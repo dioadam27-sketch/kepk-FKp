@@ -35,7 +35,7 @@ const seedDummyAccounts = async () => {
 
   for (const u of dummyUsers) {
     try {
-      await dbService.register(u as any);
+      await dbService.register(u as any, true);
     } catch (e) {
       console.warn('Seeding user already exists or failed:', u.email);
     }
@@ -73,8 +73,8 @@ function NavigationWrapper() {
   useEffect(() => {
     const checkUser = async () => {
       try {
-        // Auto-seed dummy accounts on first run
-        await seedDummyAccounts();
+        // Auto-seed dummy accounts on first run (run in background to speed up initial load)
+        seedDummyAccounts();
         
         const currentUser = await dbService.getCurrentUser();
         if (currentUser) {

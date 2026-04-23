@@ -63,7 +63,9 @@ export default function Login({ onLogin, onRegister }: LoginProps) {
     } catch (err: any) {
       console.error("Firebase Auth Error:", err);
       if (err.code === 'auth/unauthorized-domain') {
-        setError(`Domain ini belum terdaftar di Firebase Console. Harap tambahkan domain ini ke Authorized Domains di Firebase.`);
+        const hostname = window.location.hostname;
+        setError(`Domain "${hostname}" belum terdaftar di Firebase Console. Harap tambahkan domain ini ke Authorized Domains di Firebase.`);
+        console.error("Firebase Unauthorized Domain Error. Current Hostname:", hostname);
       } else if (err.code === 'auth/cancelled-popup-request' || err.code === 'auth/popup-closed-by-user') {
         // User closed the popup, do nothing
       } else {

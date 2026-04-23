@@ -183,7 +183,7 @@ export const dbService = {
     }
   },
 
-  async register(userData: Partial<User>): Promise<User | null> {
+  async register(userData: Partial<User>, skipLogin: boolean = false): Promise<User | null> {
     try {
       const response = await dualWrite(`?action=register`, userData);
       if (!response) throw new Error('Dual write failed');
@@ -196,7 +196,9 @@ export const dbService = {
         return null;
       }
       
-      localStorage.setItem('sim_kepk_user', security.encrypt(result));
+      if (!skipLogin) {
+        localStorage.setItem('sim_kepk_user', security.encrypt(result));
+      }
       return result;
     } catch (error) {
       console.error('Registration error:', error);
