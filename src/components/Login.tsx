@@ -61,8 +61,13 @@ export default function Login({ onLogin, onRegister }: LoginProps) {
         }
       }
     } catch (err: any) {
-      if (err.code !== 'auth/cancelled-popup-request' && err.code !== 'auth/popup-closed-by-user') {
-        setError('Gagal login via Google. Silakan coba lagi.');
+      console.error("Firebase Auth Error:", err);
+      if (err.code === 'auth/unauthorized-domain') {
+        setError(`Domain ini belum terdaftar di Firebase Console. Harap tambahkan domain ini ke Authorized Domains di Firebase.`);
+      } else if (err.code === 'auth/cancelled-popup-request' || err.code === 'auth/popup-closed-by-user') {
+        // User closed the popup, do nothing
+      } else {
+        setError(`Gagal login via Google: ${err.message || 'Silakan coba lagi.'}`);
       }
     } finally {
       setIsLoading(false);
